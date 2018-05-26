@@ -1,0 +1,10 @@
+language: python
+
+addons:
+  apt:
+    packages:
+      - bash
+
+# bash only
+script: >
+  jp-test.sh
