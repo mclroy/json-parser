@@ -1,8 +1,7 @@
 # json-parser
 
-It's a JSON parser for shell, namely bash, which is just an adaptation of the great [dominictarr/JSON.sh](https://github.com/dominictarr/JSON.sh) JSON.sh project which I found through [JSON](https://www.json.org/) itself.
-
-[dominictarr](https://github.com/dominictarr) Dominic,
+It's a JSON parser for shell, namely bash, which is just an adaptation of the great [dominictarr/JSON.sh](https://github.com/dominictarr/JSON.sh) project which I found through [JSON](https://www.json.org/) itself.
+[Dominic](https://github.com/dominictarr),
 Thank you!
 
 [![travis](https://secure.travis-ci.org/mclroy/json-parser.png?branch=master)](https://travis-ci.org/mclroy/json-parser)
