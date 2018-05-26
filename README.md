@@ -16,10 +16,13 @@ pipe a JSON string to it for pretty printing or to apply a JSONpath expressions:
 
 . ./json_functions
 
+response_body='{"some":"JSON"}'
 echo "${response_body}" | json_parse -p
 echo "${response_body}" | json_parse -e '$.results[0].id'
 
 ```
+
+Support for the JsonPath dot–notation. See [json-path/JsonPath](https://github.com/json-path/JsonPath)
 
 ## Options
 
