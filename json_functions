@@ -1,0 +1,173 @@
+declare -r JSON_ESCAPE='(\\[^[:cntrl:]u]|\\u[0-9a-fA-F]{4})'
+declare -r JSON_CHAR='[^[:cntrl:]"\\]'
+declare -r JSON_STRING="\"${JSON_CHAR}*(${JSON_ESCAPE}${JSON_CHAR}*)*\""
+declare -r JSON_NUMBER='-?(0|[1-9][0-9]*)([.][0-9]*)?([eE][+-]?[0-9]*)?'
+declare -r JSON_KEYWORD='null|false|true'
+declare -r JSON_SPACE='[[:space:]]+'
+declare -i JSON_DEBUG=0
+declare -i JSON_PRINT=1
+declare -i JSON_PRETTY_PRINT=0
+declare -i JSON_SOLIDUS=0
+declare -i JSON_TW=2
+declare JSON_PATH_EXPRESSION
+
+function json_tokenize () { # tokenize it literally - break it into a list of words
+  grep -E -o -e "${JSON_STRING}|${JSON_NUMBER}|${JSON_KEYWORD}|${JSON_SPACE}|." | grep -E -v -e "^${JSON_SPACE}$"
+}
+
+function json_options () {
+  local argn=$#
+  while [ $argn -gt 0 ]; do
+    json_debug "option: $1"
+    case "$1" in
+      '-d') JSON_DEBUG=1 ;;
+      '-e') shift 1; ((argn--)); JSON_PATH_EXPRESSION=$1 ;; # there are 2 modes: JSONpath and just parsed output with optional pretty printing
+      '-p') JSON_PRETTY_PRINT=1 ;;
+      '-s') JSON_SOLIDUS=1 ;;
+      *) echo "Unkown option: $1"; exit 1; ;;
+    esac
+    shift 1; ((argn--))
+  done
+  [[ "$JSON_PATH_EXPRESSION" ]] && {
+    json_debug "JSON_PATH_EXPRESSION: ${JSON_PATH_EXPRESSION}"
+    JSON_PRINT=0
+    json_debug "JSON_PRETTY_PRINT: $JSON_PRETTY_PRINT"
+    [[ $JSON_PRETTY_PRINT -ne 0 ]] && { echo -e "\noptions -e and -p option may not be used at once"; exit 1; }
+  }
+}
+
+function json_debug () {
+  [[ $JSON_DEBUG -gt 0 ]] && echo "DEBUG: $1" >&2
+}
+
+function json_object () {
+  local json_key
+  local json_object_members=''
+  local json_padding=''
+  read -r json_token ; json_debug "$json_token"
+  case "$json_token" in
+    '}') ;; # empty object
+    *)
+      [[ $JSON_PRETTY_PRINT -eq 1 ]] && {
+         ((json_depth+=JSON_TW))
+         json_padding="$(printf "\n%' '${json_depth}s")"
+         json_debug "json_padding: '$json_padding' ($json_depth)"
+      }
+      while : ; do
+        case "$json_token" in
+          '"'*'"') json_key=$json_token ;;
+          *) echo "JSON object parse error: invalid key string: $json_token" >&2; exit 1 ;;
+        esac
+        read -r json_token ; json_debug "$json_token"
+        case "$json_token" in
+          ':') ;;
+          *) echo "JSON object parse error: invalid colon" >&2; exit 1 ;;
+        esac
+        read -r json_token ; json_debug "$json_token"
+        #[[ $JSON_PRETTY_PRINT -eq 1 && ! "$json_token" =~ [{[] ]] && json_object_members+="${json_padding}"
+        json_value="$(json_parse_value "$1" ".${json_key//\"/}")" ; json_debug "value: $json_value"
+        [[ $JSON_PRETTY_PRINT -eq 1 ]] && json_object_members+="${json_padding}"
+        [[ -z "$JSON_PATH_EXPRESSION" ]] && json_object_members+="$json_key:"
+        json_object_members+="$json_value"
+        read -r json_token ; json_debug "$json_token"
+        case "$json_token" in
+          '}') break ;; # right brace
+          ',') [[ -z "$JSON_PATH_EXPRESSION" ]] && json_object_members+="," ;;
+          *) echo "JSON object parse error: invalid object delimiter: $json_token" >&2; exit 1 ;;
+        esac
+        read -r json_token ; json_debug "$json_token"
+      done
+      [[ $JSON_PRETTY_PRINT -eq 1 ]] && {
+        ((json_depth-=JSON_TW))
+        [[ $json_depth -gt 0 ]] && json_padding="$(printf "\n%' '${json_depth}s")" || json_padding=$'\n'
+        json_debug "json_padding: *$json_padding* ($json_depth)"
+        json_object_members+="${json_padding}"
+        printf '%s' "$json_padding"
+      }
+    ;;
+  esac
+  [[ $JSON_PRINT -ne 0 ]] && printf '{%s}' "$json_object_members"
+  [[ "$JSON_PATH_EXPRESSION" ]] && printf '%s' "$json_object_members"
+}
+
+function json_array () {
+  local -i json_array_index=0
+  local json_array_elements=''
+  local json_padding=''
+  read -r json_token ; json_debug "$json_token"
+  case "$json_token" in
+    ']') # empty array
+      # pretty-print an empty array when it is an element of another array
+      [[ $JSON_PRETTY_PRINT -eq 1 && $1 =~ ^.*?[][[[:digit:]]]$  ]] && {
+        json_padding="$(printf "\n%' '${json_depth}s")"
+        json_debug "json_padding: '$json_padding' ($json_depth)"
+        printf "%s" "$json_padding"
+      }
+    ;; # empty array
+    *)
+      [[ $JSON_PRETTY_PRINT -eq 1 ]] && {
+        ((json_depth+=JSON_TW))
+        json_padding="$(printf "\n%' '${json_depth}s")"
+        json_debug "json_padding: '$json_padding' ($json_depth)"
+      }
+      while : ; do
+        [[ $JSON_PRETTY_PRINT -eq 1 && ! "$json_token" =~ [{[] ]] && json_array_elements+="${json_padding}"
+        json_value="$(json_parse_value "$1" "[$json_array_index]")"; ((json_array_index++))
+        json_debug "value: $json_value"
+        [[ "$json_value" ]] && json_array_elements+="$json_value"
+        read -r json_token ; json_debug "$json_token"
+        case "$json_token" in
+          ']') break ;; # right bracket
+          ',') [[ -z "$JSON_PATH_EXPRESSION" ]] && json_array_elements+="," ;;
+          *) echo "JSON array parse error: invalid array delimiter: $json_token" >&2; exit 1 ;;
+        esac
+        read -r json_token ; json_debug "$json_token"
+      done
+      [[ $JSON_PRETTY_PRINT -eq 1 ]] && {
+        ((json_depth-=JSON_TW))
+        [[ $json_depth -gt 0 ]] && json_padding="$(printf "\n%' '${json_depth}s")" || json_padding=$'\n'
+        json_debug "json_padding: *$json_padding* ($json_depth)"
+        json_array_elements+="${json_padding}"
+        printf "%s" "$json_padding"
+      }
+    ;;
+  esac
+  [[ $JSON_PRINT -ne 0 ]] && printf '[%s]' "$json_array_elements"
+  [[ "$JSON_PATH_EXPRESSION" ]] && printf '%s' "$json_array_elements"
+}
+
+function json_parse_value () { # $1 - JSONPath parent, $2 - current JSONPath child
+  local json_path="${1:-"\$"}${2}"
+  local json_value=''
+  case "$json_token" in
+    '{') json_value=$(json_object "$json_path") ;; # left brace - begin an object
+    '[') json_value=$(json_array "$json_path") ;; # left bracket - begin an array
+    *)
+      [[ $JSON_SOLIDUS -eq 1 ]] && json_token=${json_token//'\/'/'/'}
+      if [[ "$JSON_PATH_EXPRESSION" ]] ;
+        then {
+          json_debug "JSON_PATH_EXPRESSION: ${JSON_PATH_EXPRESSION} / $json_path"
+          [[ "$json_path" = "$JSON_PATH_EXPRESSION" ]] && {
+            json_value="$(printf "%s:%s" "$json_path" "$json_token")"
+          }
+        }
+      elif [[ $JSON_PRINT -ne 0 ]];
+        then json_value="$json_token"
+      fi
+    ;;
+  esac
+  json_debug "$(printf "%s = %s\n" "$json_path" "$json_value")"
+  printf '%s' "$json_value"
+}
+
+function json_parse_start () {
+  local -i json_depth=0
+  local json_token
+  read -r json_token
+  json_parse_value
+}
+
+function json_parse () {
+  json_options "$@"
+  json_tokenize | json_parse_start
+}
